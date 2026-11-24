@@ -1,50 +1,44 @@
-import { createDemoStore, number, orderTypeLabel, rupiah } from './demo-store.js';
+import { createCart, createRequest, number, rupiah } from './cart-client.js';
+import { startPayment } from './payment.js';
 
 const root = document.querySelector('[data-customer-page]');
 const config = JSON.parse(document.getElementById('customer-data').textContent);
-const store = createDemoStore(config);
+const request = createRequest(document.querySelector('meta[name="csrf-token"]').content);
+const cart = createCart(config, request);
 const $ = (selector, container = root) => container.querySelector(selector);
 const $$ = (selector, container = root) => [...container.querySelectorAll(selector)];
-const writeText = (selector, value, container = root) => $$(selector, container).forEach((element) => { element.textContent = value; });
-const checkoutDate = new Intl.DateTimeFormat('id-ID', { dateStyle: 'medium', timeStyle: 'short', timeZone: config.timeZone });
+const write = (selector, value, container = root) => $$(selector, container).forEach((element) => { element.textContent = value; });
 let toastTimer;
 
 function toast(message) {
-    const region = $('[data-toast]');
     clearTimeout(toastTimer);
+    const region = $('[data-toast]');
     region.textContent = message;
-    toastTimer = setTimeout(() => { region.textContent = ''; }, 3200);
+    toastTimer = setTimeout(() => { region.textContent = ''; }, 3500);
 }
 
-function money(state = store.read()) {
-    const totals = store.totals(state.lines);
-    writeText('[data-cart-count]', totals.count);
-    writeText('[data-cart-subtotal]', number(totals.subtotal));
-    writeText('[data-subtotal]', rupiah(totals.subtotal));
-    writeText('[data-tax]', rupiah(totals.tax));
-    writeText('[data-total]', rupiah(totals.total));
+function renderTotals() {
+    const { totals } = cart.state;
+    write('[data-cart-count]', totals.count);
+    write('[data-cart-subtotal]', number(totals.subtotal));
+    write('[data-subtotal]', rupiah(totals.subtotal));
+    write('[data-discount]', rupiah(totals.discount));
+    write('[data-tax]', rupiah(totals.tax));
+    write('[data-rounding]', rupiah(totals.rounding));
+    for (const row of $$('[data-rounding-row]')) row.hidden = totals.rounding === 0;
+    write('[data-total]', rupiah(totals.total));
     for (const link of $$('[data-cart-link]')) link.hidden = totals.count === 0;
-    return totals;
 }
 
-function setQuantity(control, value, max = Number(control.dataset.max), min = Number(control.dataset.min ?? 0)) {
-    control.dataset.max = max;
+function setQuantity(control, value, max = Number(control.dataset.max)) {
+    const min = Number(control.dataset.min ?? 0);
     const next = Math.max(0, Math.min(max, Math.max(min, value)));
+    control.dataset.max = max;
     control.dataset.value = next;
-    $('[data-count]', control).textContent = next;
+    write('[data-count]', next, control);
     $('[data-step="-1"]', control).disabled = next <= min;
     $('[data-step="1"]', control).disabled = next >= max;
     return next;
-}
-
-function bindQuantity(container, callback) {
-    container.addEventListener('click', (event) => {
-        const step = event.target.closest('[data-step]');
-        if (!step) return;
-        const control = step.closest('[data-quantity]');
-        const next = setQuantity(control, Number(control.dataset.value) + Number(step.dataset.step));
-        callback(control, next, step);
-    });
 }
 
 function startCatalog() {
@@ -52,10 +46,10 @@ function startCatalog() {
     const search = $('#menu-search');
     const input = $('[data-search-input]');
     const rows = $$('[data-menu-row]');
-    const activeTab = $('[aria-current="page"]');
-    if (activeTab) {
-        const navigation = activeTab.parentElement;
-        navigation.scrollLeft = Math.max(0, activeTab.getBoundingClientRect().right - navigation.getBoundingClientRect().right + 8);
+    const active = $('[aria-current="page"]');
+    if (active) {
+        const navigation = active.parentElement;
+        navigation.scrollLeft = Math.max(0, active.getBoundingClientRect().right - navigation.getBoundingClientRect().right + 8);
     }
     const filter = () => {
         const query = input.value.trim().toLocaleLowerCase('id');
@@ -64,7 +58,7 @@ function startCatalog() {
             row.hidden = !row.dataset.menuName.toLocaleLowerCase('id').includes(query);
             if (!row.hidden) count++;
         }
-        $('[data-no-results]').hidden = count !== 0;
+        $('[data-no-results]').hidden = count > 0;
     };
     function showSearch(show) {
         search.hidden = !show;
@@ -78,68 +72,65 @@ function startCatalog() {
 }
 
 function startItem() {
-    const itemId = $('[data-item]').dataset.item;
-    const item = config.catalog[itemId];
+    const item = config.product;
     const editId = new URLSearchParams(location.search).get('ubah');
-    const state = store.read();
-    const initial = state.lines.find((line) => line.id === editId && line.item === itemId);
+    const currentLine = () => cart.state.lines.find((line) => line.id === editId && line.item === item.id);
     const qty = $('[data-main-quantity]');
-    const lunchBox = $('[data-lunch-box]');
     const note = $('[data-item-note]');
     const add = $('[data-add-item]');
     const action = $('[data-item-action]');
-    const originalLabel = initial ? 'Simpan Perubahan' : action.textContent;
+    const originalLabel = editId ? 'Simpan Perubahan' : action.textContent;
     const optionControls = $$('[data-option]');
-    let active = false;
+    let busy = false;
 
+    function available() {
+        const used = cart.state.lines.filter((line) => line.item === item.id && line.id !== editId)
+            .reduce((sum, line) => sum + line.quantity, 0);
+        return Math.max(0, item.stok - used);
+    }
     function draft() {
         const options = Object.fromEntries(optionControls.map((control) => [control.dataset.option, Number(control.dataset.value)]));
-        if (lunchBox?.checked) options['lunch-box'] = 1;
         return { options, quantity: Number(qty.dataset.value), note: note.value };
     }
-
-    function refresh() {
-        const current = store.read();
-        const max = store.available(current, itemId, editId);
+    function render() {
+        const max = available();
         setQuantity(qty, Number(qty.dataset.value || 1), max);
-        add.disabled = active || max < 1 || (editId && !current.lines.some((line) => line.id === editId && line.item === itemId));
-        action.textContent = max < 1 && item.stok > 0 ? 'Stok sudah di keranjang' : originalLabel;
-        writeText('[data-item-total]', number(store.unitPrice(itemId, draft().options) * Number(qty.dataset.value)));
+        add.disabled = busy || !cart.state.table || max < 1 || Boolean(editId && !currentLine());
+        action.textContent = busy ? 'Menyimpan…' : max < 1 && item.stok > 0 ? 'Stok sudah di keranjang' : originalLabel;
+        const extras = Object.entries(draft().options).reduce((sum, [key, value]) => sum + item.options[key].price * value, 0);
+        write('[data-item-total]', number((item.price + extras) * Number(qty.dataset.value)));
     }
 
-    setQuantity(qty, initial?.quantity ?? 1, store.available(state, itemId, editId));
-    for (const control of optionControls) setQuantity(control, initial?.options[control.dataset.option] ?? 0);
-    if (lunchBox) {
-        lunchBox.checked = Boolean(initial?.options['lunch-box']);
-        lunchBox.addEventListener('change', refresh);
+    const initial = currentLine();
+    setQuantity(qty, initial?.quantity ?? 1, available());
+    for (const control of optionControls) {
+        setQuantity(control, initial?.options.find((option) => option.id === control.dataset.option)?.quantity ?? 0);
     }
     note.value = initial?.note ?? '';
-    if (editId && !initial) toast('Item yang ingin diubah sudah tidak ada di keranjang.');
-    bindQuantity(root, refresh);
-    add.addEventListener('click', () => {
-        const result = store.saveItem(itemId, draft(), editId);
-        if (result.error) { toast(result.error); refresh(); return; }
-        active = true;
-        add.disabled = true;
-        sessionToast(editId ? 'Pesanan diperbarui.' : 'Menu ditambahkan ke keranjang.');
-        location.assign(editId ? config.urls.cart : `${config.urls.catalog}/${item.category}`);
+    if (editId && !initial) toast('Item sudah tidak ada di keranjang.');
+    root.addEventListener('click', (event) => {
+        const step = event.target.closest('[data-step]');
+        if (!step || busy) return;
+        const control = step.closest('[data-quantity]');
+        setQuantity(control, Number(control.dataset.value) + Number(step.dataset.step));
+        render();
     });
-    refresh();
-    return refresh;
-}
-
-function sessionToast(message) {
-    try { sessionStorage.setItem('warkop.customer.toast', message); } catch { /* Optional feedback. */ }
-}
-
-function focusRow(id, selector) {
-    const row = $$('[data-line-id]').find((element) => element.dataset.lineId === id);
-    const target = row && ($(selector, row)?.disabled ? $('button:not(:disabled)', row) : $(selector, row));
-    target?.focus();
-}
-
-function lineOptions(line) {
-    return Object.entries(line.options).map(([key, qty]) => `${qty}× ${config.options[key].name}`).join(' · ');
+    add.addEventListener('click', async () => {
+        busy = true;
+        render();
+        try {
+            await cart.change({ action: 'item', menu: Number(item.id), line: editId, ...draft() });
+            try {
+                sessionStorage.setItem('warkop.customer.toast', editId ? 'Pesanan diperbarui.' : 'Menu ditambahkan ke keranjang.');
+            } catch { /* Feedback is optional if browser storage is disabled. */ }
+            location.assign(editId ? config.urls.cart : `${config.urls.catalog}/${item.category}`);
+        } catch (error) {
+            toast(error.message);
+            busy = false;
+            render();
+        }
+    });
+    return render;
 }
 
 function startCart() {
@@ -147,160 +138,158 @@ function startCart() {
     const template = $('[data-cart-line-template]');
     const type = $('[data-order-type]');
     const note = $('[data-cart-note]');
+    const next = $('[data-checkout-link]');
+    const errorRegion = $('[data-cart-error]');
+    let pending = Promise.resolve(true);
 
+    function error(message) {
+        errorRegion.hidden = !message;
+        errorRegion.textContent = message;
+    }
     function render() {
-        const state = store.read();
+        const state = cart.state;
         const hasItems = state.lines.length > 0;
         $('[data-cart-empty]').hidden = hasItems;
         $('[data-cart-content]').hidden = !hasItems;
         $('[data-cart-footer]').hidden = !hasItems;
+        next.setAttribute('aria-disabled', String(!state.valid || !state.table));
         type.value = state.type;
         if (document.activeElement !== note) note.value = state.note;
-        money(state);
+        renderTotals();
         lines.replaceChildren(...state.lines.map((line) => {
-            const item = config.catalog[line.item];
             const row = template.content.firstElementChild.cloneNode(true);
             row.dataset.lineId = line.id;
-            writeText('[data-line-name]', item.nama_menu, row);
-            writeText('[data-line-price]', rupiah(store.unitPrice(line.item, line.options) * line.quantity), row);
-            for (const [selector, text] of [['[data-line-options]', lineOptions(line)], ['[data-line-note]', line.note]]) {
+            write('[data-line-name]', line.name, row);
+            write('[data-line-price]', rupiah(line.amount), row);
+            for (const [selector, text] of [
+                ['[data-line-options]', line.options.map((option) => `${option.quantity}× ${option.name}`).join(' · ')],
+                ['[data-line-note]', line.note],
+                ['[data-line-issue]', line.issue],
+            ]) {
                 const element = $(selector, row);
                 element.hidden = !text;
-                element.textContent = text;
+                element.textContent = text ?? '';
             }
             const edit = $('[data-line-edit]', row);
             edit.href = `${config.urls.item.replace('__item__', line.item)}?dari=pesanan&ubah=${line.id}`;
-            edit.setAttribute('aria-label', `Ubah ${item.nama_menu}`);
-            $('[data-line-remove]', row).setAttribute('aria-label', `Hapus ${item.nama_menu}`);
-            setQuantity($('[data-quantity]', row), line.quantity, store.available(state, line.item, line.id));
+            edit.setAttribute('aria-label', `Ubah ${line.name}`);
+            if (!line.max) edit.hidden = true;
+            $('[data-line-remove]', row).setAttribute('aria-label', `Hapus ${line.name}`);
+            const qty = $('[data-quantity]', row);
+            setQuantity(qty, line.quantity, line.max);
+            if (line.issue) {
+                qty.dataset.value = line.quantity;
+                write('[data-count]', line.quantity, qty);
+            }
             return row;
         }));
     }
 
-    bindQuantity(lines, (control, next, step) => {
-        const { lineId } = control.closest('[data-line-id]').dataset;
-        if (!store.updateLine(lineId, next)) toast('Stok atau isi keranjang sudah berubah.');
-        render();
-        focusRow(lineId, `[data-step="${step.dataset.step}"]`);
-    });
+    function mutate(payload, keepFocus) {
+        pending = pending.then(async () => {
+            try {
+                await cart.change(payload);
+                render();
+                error('');
+                keepFocus?.();
+                return true;
+            } catch (failure) {
+                error(failure.message);
+                return false;
+            }
+        });
+        return pending;
+    }
+
     lines.addEventListener('click', (event) => {
-        const remove = event.target.closest('[data-line-remove]');
-        if (!remove) return;
-        store.updateLine(remove.closest('[data-line-id]').dataset.lineId, 0);
-        render();
-        ($('[data-line-edit]') ?? $('[data-cart-empty] a'))?.focus();
-        toast('Item dihapus dari keranjang.');
+        const lineId = event.target.closest('[data-line-id]')?.dataset.lineId;
+        if (!lineId) return;
+        const step = event.target.closest('[data-step]');
+        if (step) {
+            const control = step.closest('[data-quantity]');
+            const value = Math.max(1, Math.min(Number(control.dataset.max), Number(control.dataset.value) + Number(step.dataset.step)));
+            step.disabled = true;
+            void mutate({ action: 'quantity', line: lineId, quantity: value }, () => {
+                const row = $$('[data-line-id]').find((element) => element.dataset.lineId === lineId);
+                if (row) $('button:not([disabled])', row)?.focus();
+            }).then((ok) => { if (!ok) step.disabled = false; });
+        } else if (event.target.closest('[data-line-remove]')) {
+            void mutate({ action: 'remove', line: lineId }, () => {
+                ($('[data-line-edit]:not([hidden])') ?? $('[data-cart-empty] a'))?.focus();
+                toast('Item dihapus dari keranjang.');
+            });
+        }
     });
-    type.addEventListener('change', () => store.setDetails({ type: type.value }));
-    note.addEventListener('input', () => store.setDetails({ note: note.value }));
-    render();
+    const saveDetails = () => mutate({ action: 'details', type: type.value, note: note.value });
+    type.addEventListener('change', saveDetails);
+    note.addEventListener('change', saveDetails);
+    next.addEventListener('click', async (event) => {
+        event.preventDefault();
+        if (!cart.state.valid || !cart.state.table) { error('Periksa meja, stok, dan pilihan di keranjang.'); return; }
+        if (await saveDetails()) location.assign(next.href);
+    });
     return render;
 }
 
 function startCheckout() {
     const form = $('[data-checkout-form]');
     const consent = $('[data-checkout-consent]');
-    const dialog = $('[data-payment-dialog]');
-    const confirm = $('[data-confirm-payment]');
-    const pay = $('[data-checkout-submit]');
-    const error = $('[data-checkout-error]');
-    let pending;
-    let paying = false;
+    const button = $('[data-checkout-submit]');
+    const region = $('[data-checkout-error]');
+    const canPay = Boolean(consent);
+    let busy = false;
 
-    function showError(message) {
-        error.hidden = !message;
-        error.textContent = message;
+    function error(message) {
+        region.hidden = !message;
+        region.textContent = message;
     }
-    function validateInputs() {
-        const { name, phone, payment } = form.elements;
-        const phoneText = phone.value.trim();
-        const digits = phoneText.replace(/\D/g, '').length;
-        name.setCustomValidity(name.value && name.value.trim().length < 2 ? 'Masukkan nama minimal 2 karakter.' : '');
-        phone.setCustomValidity(phoneText && (!/^\+?[\d ()-]+$/.test(phoneText) || digits < 8 || digits > 15) ? 'Masukkan nomor ponsel 8–15 digit.' : '');
-        consent.hidden = !(name.value.trim().length >= 2 && payment.value);
-        form.elements.consent.disabled = consent.hidden;
+    function validate() {
+        if (!canPay) return;
+        const fields = form.elements;
+        const phone = fields.phone.value.trim();
+        const digits = phone.replace(/\D/g, '').length;
+        fields.name.setCustomValidity(fields.name.value && fields.name.value.trim().length < 2 ? 'Masukkan nama minimal 2 karakter.' : '');
+        fields.phone.setCustomValidity(phone && (!/^\+?[\d ()-]+$/.test(phone) || digits < 8 || digits > 15) ? 'Masukkan nomor ponsel 8–15 digit.' : '');
+        consent.hidden = !(fields.name.value.trim().length >= 2 && fields.payment.checked);
+        fields.consent.disabled = consent.hidden;
     }
     function render() {
-        const state = store.read();
+        const state = cart.state;
         const hasItems = state.lines.length > 0;
         $('[data-checkout-empty]').hidden = hasItems;
         form.hidden = !hasItems;
         $('[data-checkout-footer]').hidden = !hasItems;
-        writeText('[data-checkout-type]', orderTypeLabel(state.type));
-        money(state);
+        button.disabled = busy || !canPay || !state.valid || !state.table;
+        button.textContent = busy ? 'Menyimpan…' : 'Lanjut Bayar';
+        write('[data-checkout-type]', state.type === 'takeaway' ? 'Bawa pulang' : 'Makan di tempat');
+        if (hasItems && (!state.valid || !state.table)) error('Periksa nomor meja dan ketersediaan item di keranjang.');
+        renderTotals();
     }
-    form.addEventListener('input', () => { validateInputs(); showError(''); });
-    form.addEventListener('submit', (event) => {
+    form.addEventListener('input', () => { error(''); validate(); });
+    form.addEventListener('submit', async (event) => {
         event.preventDefault();
-        validateInputs();
-        if (paying || !form.reportValidity()) return;
-        pending = store.read();
-        if (!pending.lines.length) { render(); return; }
-        writeText('[data-payment-total]', rupiah(store.totals(pending.lines).total));
-        dialog.showModal();
-    });
-    $('[data-cancel-payment]').addEventListener('click', () => dialog.close());
-    dialog.addEventListener('cancel', (event) => { if (paying) event.preventDefault(); });
-    confirm.addEventListener('click', () => {
-        if (paying || !pending) return;
-        paying = true;
-        confirm.disabled = true;
-        $('[data-cancel-payment]').disabled = true;
-        pay.disabled = true;
-        confirm.textContent = 'Memproses…';
-        dialog.setAttribute('aria-busy', 'true');
-        setTimeout(() => {
-            if (store.simulateCheckout(pending)) {
-                location.replace(config.urls.success);
-                return;
+        validate();
+        if (button.disabled || !form.reportValidity()) return;
+        const fields = Object.fromEntries(new FormData(form));
+        busy = true;
+        render();
+        try {
+            const { url } = await cart.checkout({
+                name: fields.name, phone: fields.phone || null, email: fields.email || null,
+                payment: fields.payment, consent: fields.consent, checkout_key: cart.state.key, quote: cart.state.signature,
+            });
+            location.replace(url);
+        } catch (failure) {
+            if (failure.status === 422) {
+                try { await cart.refresh(); } catch { /* Keep the original validation message. */ }
             }
-            paying = false;
-            pay.disabled = false;
-            confirm.disabled = false;
-            $('[data-cancel-payment]').disabled = false;
-            confirm.textContent = 'Konfirmasi Demo';
-            dialog.removeAttribute('aria-busy');
-            dialog.close();
+            busy = false;
             render();
-            showError('Keranjang berubah. Periksa ringkasan lalu coba lagi.');
-            toast('Keranjang berubah. Periksa pesanan.');
-        }, 420);
+            error(failure.message);
+        }
     });
-    validateInputs();
-    render();
+    validate();
     return render;
-}
-
-function renderReceipt() {
-    const receipt = store.read().receipt;
-    $('[data-order-empty]').hidden = Boolean(receipt);
-    $('[data-order-content]').hidden = !receipt;
-    if (!receipt) return;
-    const totals = store.totals(receipt.lines);
-    const entries = {
-        id: receipt.id, date: checkoutDate.format(new Date(receipt.date)), table: receipt.table,
-        type: orderTypeLabel(receipt.type), method: 'QRIS Demo', subtotal: rupiah(totals.subtotal),
-        tax: rupiah(totals.tax), total: rupiah(totals.total), rate: config.taxRate,
-    };
-    for (const [key, value] of Object.entries(entries)) writeText(`[data-order-field="${key}"]`, value);
-    const lines = $('[data-order-lines]');
-    if (!lines) return;
-    const note = $('[data-receipt-note]');
-    note.hidden = !receipt.note.trim();
-    note.textContent = note.hidden ? '' : `Catatan pesanan: ${receipt.note}`;
-    const template = $('[data-order-line-template]');
-    lines.replaceChildren(...receipt.lines.map((line) => {
-        const item = config.catalog[line.item];
-        const row = template.content.firstElementChild.cloneNode(true);
-        const photo = $('[data-order-line-photo]', row);
-        photo.src = `${config.assets}/${item.foto}`;
-        photo.classList.toggle('customer-product-image--banner', item.foto.startsWith('cat-'));
-        writeText('[data-order-line-name]', item.nama_menu, row);
-        writeText('[data-order-line-price]', rupiah(store.unitPrice(line.item, line.options)), row);
-        writeText('[data-order-line-extra]', [lineOptions(line), line.note].filter(Boolean).join(' · '), row);
-        writeText('[data-order-line-quantity]', `×${line.quantity}`, row);
-        return row;
-    }));
 }
 
 function startOutlet() {
@@ -316,19 +305,21 @@ function startOutlet() {
     });
 }
 
-let refresh = money;
+let render = renderTotals;
 switch (root.dataset.customerPage) {
     case 'catalog': startCatalog(); break;
-    case 'item': refresh = startItem(); break;
-    case 'cart': refresh = startCart(); break;
-    case 'checkout': refresh = startCheckout(); break;
-    case 'success':
-    case 'order': refresh = renderReceipt; break;
+    case 'item': render = startItem(); break;
+    case 'cart': render = startCart(); break;
+    case 'checkout': render = startCheckout(); break;
+    case 'payment': startPayment($('[data-midtrans-payment]'), request, toast); break;
     case 'outlet': startOutlet(); break;
 }
-refresh();
-window.addEventListener('storage', (event) => { if (event.key === store.storageKey || event.key === null) refresh(); });
-window.addEventListener('pageshow', (event) => { if (event.persisted) refresh(); });
+render();
+window.addEventListener('pageshow', async (event) => {
+    if (event.persisted) {
+        try { await cart.refresh(); render(); } catch (error) { toast(error.message); }
+    }
+});
 try {
     const message = sessionStorage.getItem('warkop.customer.toast');
     if (message) {
@@ -336,4 +327,4 @@ try {
         toast(message);
         $('[data-cart-link] a')?.classList.add('customer-cart-pulse');
     }
-} catch { /* Storage permission does not prevent navigation. */ }
+} catch { /* Feedback is optional if browser storage is disabled. */ }

@@ -1,4 +1,4 @@
-<x-customer.layout :title="$item['nama_menu']" page="item" :demo="$demo">
+<x-customer.layout :title="$item['nama_menu']" page="item" :customer="$customer" :state="$state" :product="$item">
     <main id="konten" data-item="{{ $item['id'] }}">
         <div class="relative h-[217px] overflow-hidden sm:h-73">
             <x-customer.photo :item="$item" :lazy="false" />
@@ -9,30 +9,18 @@
 
         <div class="space-y-1.5 border-b border-rule px-4.5 py-3 sm:px-6">
             <h1 class="text-sm leading-tight font-bold sm:text-lg">{{ $item['nama_menu'] }}</h1>
-            <strong class="customer-price text-sm">{{ number_format($item['harga'], 0, ',', '.') }}</strong>
+            <strong class="customer-price text-sm">{{ \App\Services\Customer\Money::format($item['price']) }}</strong>
             <p class="text-[11px] text-subtle sm:text-sm">{{ $item['deskripsi'] }}</p>
         </div>
 
-        @if ($item['hasOptions'])
-            <section class="space-y-2 border-b border-rule px-4.5 py-3 sm:px-6" aria-labelledby="takeaway-title">
-                <div class="flex items-start justify-between gap-2">
-                    <div>
-                        <h2 id="takeaway-title" class="text-xs font-extrabold sm:text-sm">Takeaway</h2>
-                        <p class="text-[10px] text-subtle">Opsional · maks. 1</p>
-                    </div>
-                    <input id="lunch-box" data-lunch-box class="size-5 shrink-0 accent-warkop" type="checkbox">
-                </div>
-                <label for="lunch-box" class="block cursor-pointer text-xs">Lunch Box <strong>(+ 1.000)</strong></label>
-            </section>
-
+        @if ($item['options'])
             <section class="border-b border-rule px-4.5 py-3 sm:px-6" aria-labelledby="options-title">
-                <h2 id="options-title" class="text-xs font-extrabold sm:text-sm">Recommended Add On</h2>
+                <h2 id="options-title" class="text-xs font-extrabold sm:text-sm">Pilihan Tambahan</h2>
                 <p class="text-[10px] text-subtle">Opsional</p>
                 <div class="mt-1.5 grid gap-0.5">
-                    @foreach ($demo['options'] as $key => $option)
-                        @continue($key === 'lunch-box')
+                    @foreach ($item['options'] as $key => $option)
                         <div class="flex min-h-6.5 items-center justify-between gap-1.5 text-[11px] sm:text-xs">
-                            <span>{{ $option['name'] }} <strong>(+ {{ number_format($option['price'], 0, ',', '.') }})</strong></span>
+                            <span>{{ $option['name'] }} <strong>(+ {{ \App\Services\Customer\Money::format($option['price']) }})</strong></span>
                             @if ($option['max'])
                                 <x-customer.quantity :label="$option['name']" :max="$option['max']" data-option="{{ $key }}" class="[&_button]:size-7" />
                             @else
@@ -56,10 +44,13 @@
             <span>Jumlah Pesanan</span>
             <x-customer.quantity label="jumlah pesanan" :max="$item['stok']" :value="1" data-main-quantity data-min="1" />
         </div>
-        <button type="button" class="customer-cta w-full" data-add-item @disabled(!$item['stok'])>
+        @if (!$state['table'] && $item['stok'])
+            <a href="{{ route('customer.home') }}#pilih-meja" class="customer-cta customer-cta--outline mb-2 w-full">Pilih meja sebelum memesan</a>
+        @endif
+        <button type="button" class="customer-cta w-full" data-add-item @disabled(!$item['stok'] || !$state['table'])>
             <span data-item-action>{{ $item['stok'] ? 'Tambah Pesanan' : 'Stok Habis' }}</span>
             @if ($item['stok'])
-                <span aria-hidden="true">·</span><span class="customer-price" data-item-total>{{ number_format($item['harga'], 0, ',', '.') }}</span>
+                <span aria-hidden="true">·</span><span class="customer-price" data-item-total>{{ \App\Services\Customer\Money::format($item['price']) }}</span>
             @endif
         </button>
     </footer>

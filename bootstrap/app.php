@@ -11,11 +11,12 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware) {
-    $middleware->alias([
-        'owner' => \App\Http\Middleware\EnsureOwner::class,
-        'pegawai' => \App\Http\Middleware\PegawaiOnly::class,
-    ]);
-})
+        $middleware->validateCsrfTokens(except: ['payments/midtrans/notification']);
+        $middleware->alias([
+            'owner' => \App\Http\Middleware\EnsureOwner::class,
+            'pegawai' => \App\Http\Middleware\PegawaiOnly::class,
+        ]);
+    })
     ->withExceptions(function (Exceptions $exceptions) {
         //
     })->create();
