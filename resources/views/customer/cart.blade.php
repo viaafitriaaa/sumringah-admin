@@ -1,4 +1,4 @@
-<x-customer.layout title="Pesanan" page="cart" :demo="$demo">
+<x-customer.layout title="Pesanan" page="cart" :customer="$customer" :state="$state">
     <x-customer.header title="Pesanan" :back="route('customer.catalog')" />
     <main id="konten" class="pb-5">
         <x-customer.empty title="Keranjang masih kosong" description="Tambahkan menu yang ingin kamu pesan." :href="route('customer.catalog')" data-cart-empty />
@@ -28,15 +28,17 @@
                 <h2 id="cart-totals" class="text-center font-heading text-sm">Rincian Pembayaran</h2>
                 <dl class="space-y-2 text-xs">
                     <div class="flex justify-between gap-2"><dt>Subtotal</dt><dd data-subtotal></dd></div>
-                    <div class="flex justify-between gap-2 text-subtle"><dt>PBJT demo ({{ $demo['taxRate'] }}%)</dt><dd data-tax></dd></div>
+                    <div class="flex justify-between gap-2 text-subtle"><dt>Diskon</dt><dd data-discount></dd></div>
+                    <div class="flex justify-between gap-2 text-subtle"><dt>PBJT ({{ $customer['taxBps'] / 100 }}%)</dt><dd data-tax></dd></div>
                     <div class="flex justify-between gap-2 text-sm font-extrabold"><dt>Total</dt><dd class="text-warkop" data-total></dd></div>
                 </dl>
             </section>
+            <p data-cart-error role="alert" hidden class="customer-container mt-3 text-xs font-bold text-warkop"></p>
         </div>
     </main>
 
     <x-customer.total-bar data-cart-footer hidden>
-        <a href="{{ route('customer.checkout') }}" class="customer-cta min-w-39 sm:min-w-52">Lanjut Pembayaran</a>
+        <a href="{{ route('customer.checkout') }}" data-checkout-link class="customer-cta min-w-39 sm:min-w-52">Lanjut Pembayaran</a>
     </x-customer.total-bar>
 
     <template data-cart-line-template>
@@ -47,6 +49,7 @@
             </div>
             <p data-line-options class="text-[11px] text-subtle" hidden></p>
             <p data-line-note class="text-[11px] wrap-break-word text-subtle" hidden></p>
+            <p data-line-issue class="text-[11px] font-bold text-warkop" hidden></p>
             <div class="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
                 <span data-line-price class="customer-price"></span>
                 <div class="flex items-center gap-2">

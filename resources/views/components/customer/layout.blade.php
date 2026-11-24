@@ -1,4 +1,4 @@
-@props(['title', 'page', 'demo'])
+@props(['title', 'page', 'customer', 'state', 'product' => null])
 
 <!doctype html>
 <html lang="id">
@@ -6,9 +6,10 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <meta name="theme-color" content="#810003">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
     <meta name="robots" content="noindex">
     <title>{{ $title }} | Warkop Sumringah</title>
-    <link rel="icon" href="{{ asset('customer/logo.png') }}" type="image/png">
+    <link rel="icon" href="{{ asset('customer/favicon.png') }}" type="image/png" sizes="96x96">
     @vite(['resources/css/customer.css', 'resources/js/customer/app.js'])
 </head>
 <body class="bg-paper text-ink antialiased sm:bg-[#e9e1e1]">
@@ -18,18 +19,15 @@
         <p class="customer-toast" role="status" aria-live="polite" data-toast></p>
     </div>
     <script type="application/json" id="customer-data">{!! \Illuminate\Support\Js::encode([
-        'catalog' => $demo['items'],
-        'options' => $demo['options'],
-        'table' => $demo['table'],
-        'taxRate' => $demo['taxRate'],
-        'timeZone' => $demo['timeZone'],
-        'assets' => asset('customer'),
+        'state' => $state,
+        'product' => $product,
         'urls' => [
             'catalog' => route('customer.catalog'),
             'item' => route('customer.item', ['item' => '__item__']),
             'cart' => route('customer.cart'),
-            'checkout' => route('customer.checkout'),
-            'success' => route('customer.success'),
+            'cartState' => route('customer.cart.state'),
+            'cartUpdate' => route('customer.cart.update'),
+            'checkout' => route('customer.checkout.store'),
         ],
     ]) !!}</script>
 </body>
