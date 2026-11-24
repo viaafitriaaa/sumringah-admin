@@ -97,3 +97,5 @@ Route::get('/cek-php', function () {
         'tmp_writable' => is_writable(sys_get_temp_dir()),
     ];
 });
+
+require __DIR__.'/customer.php';
