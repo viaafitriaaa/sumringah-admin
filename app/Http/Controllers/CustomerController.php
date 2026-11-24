@@ -6,16 +6,26 @@ use App\Models\Order;
 use App\Models\Payment;
 use App\Services\Customer\Cart;
 use App\Services\Customer\Catalog;
+use App\Services\Customer\Midtrans;
+use App\Services\Customer\MidtransPayments;
+use App\Services\Customer\MidtransUnavailable;
 use App\Services\Customer\Ordering;
 use Illuminate\Contracts\View\View;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\Rule;
 
 class CustomerController extends Controller
 {
-    public function __construct(private Catalog $catalog, private Cart $cart, private Ordering $ordering) {}
+    public function __construct(
+        private Catalog $catalog,
+        private Cart $cart,
+        private Ordering $ordering,
+        private Midtrans $midtrans,
+        private MidtransPayments $payments,
+    ) {}
 
     public function home(Request $request): View
     {
@@ -84,7 +94,7 @@ class CustomerController extends Controller
 
     public function checkout(Request $request): View
     {
-        return $this->page($request, 'checkout', ['simulation' => $this->ordering->simulationEnabled()]);
+        return $this->page($request, 'checkout', ['provider' => $this->checkoutProvider()]);
     }
 
     public function storeOrder(Request $request): JsonResponse
@@ -104,14 +114,24 @@ class CustomerController extends Controller
             'consent' => 'accepted',
         ]);
 
-        $order = $this->ordering->place($request->session(), $input);
+        $provider = $this->checkoutProvider();
+        abort_unless($provider, 503, 'Pembayaran belum tersedia.');
+        $order = $this->ordering->place($request->session(), $input, $provider);
+        if ($order->payment?->provider === Payment::MIDTRANS) {
+            try {
+                $this->payments->sync($order, allowCharge: true);
+            } catch (MidtransUnavailable $failure) {
+                // The saved order is still recoverable from its payment page with the same number.
+                $this->logPaymentFailure($order, $failure);
+            }
+        }
 
         return response()->json(['url' => route('customer.payment', $order->number)]);
     }
 
     public function payment(Request $request, string $number): View|RedirectResponse
     {
-        $order = $this->ordering->owned($request->session(), $number);
+        $order = $this->ordering->owned($request->session(), $number)->load('payment');
         if ($order->status !== Order::AWAITING) {
             return redirect()->route($order->status === Order::CONFIRMED ? 'customer.success' : 'customer.order', $number);
         }
@@ -119,6 +139,29 @@ class CustomerController extends Controller
         return $this->page($request, 'payment', [
             'order' => $order,
             'simulation' => $this->ordering->simulationEnabled() && $order->payment?->provider === Payment::SIMULATION,
+            'sandbox' => $order->payment?->provider === Payment::MIDTRANS,
+        ]);
+    }
+
+    public function paymentStatus(Request $request, string $number): JsonResponse
+    {
+        $order = $this->ordering->owned($request->session(), $number);
+        try {
+            $payment = $this->payments->sync($order, allowCharge: $request->boolean('retry'));
+        } catch (MidtransUnavailable $failure) {
+            $this->logPaymentFailure($order, $failure);
+
+            return response()->json(['message' => 'Status Midtrans belum tersedia. Coba cek kembali.'], 503);
+        }
+
+        return response()->json([
+            'qrUrl' => $payment->qr_url,
+            'expiresAt' => $payment->expires_at?->toIso8601String(),
+            'redirect' => match ($payment->status) {
+                'paid' => route('customer.success', $number),
+                'cancelled' => route('customer.order', $number),
+                default => null,
+            },
         ]);
     }
 
@@ -133,9 +176,20 @@ class CustomerController extends Controller
     public function cancel(Request $request, string $number): RedirectResponse
     {
         $order = $this->ordering->owned($request->session(), $number);
-        $this->ordering->resolveSimulation($order, false);
+        if ($order->payment?->provider === Payment::SIMULATION) {
+            $this->ordering->resolveSimulation($order, false);
+        } else {
+            try {
+                $this->payments->sync($order, cancel: true);
+            } catch (MidtransUnavailable $failure) {
+                $this->logPaymentFailure($order, $failure);
 
-        return redirect()->route('customer.order', $number);
+                return redirect()->route('customer.payment', $number)
+                    ->with('payment_error', 'Pembatalan belum dikonfirmasi oleh Midtrans. Cek status atau coba lagi.');
+            }
+        }
+
+        return redirect()->route($order->refresh()->status === Order::CONFIRMED ? 'customer.success' : 'customer.order', $number);
     }
 
     public function success(Request $request, ?string $number = null): View|RedirectResponse
@@ -166,6 +220,20 @@ class CustomerController extends Controller
         }
 
         return $this->ordering->owned($request->session(), $number)->load(['items', 'payment']);
+    }
+
+    private function checkoutProvider(): ?string
+    {
+        return match (config('payment.driver')) {
+            'midtrans' => $this->midtrans->ready() ? Payment::MIDTRANS : null,
+            'simulation' => $this->ordering->simulationEnabled() ? Payment::SIMULATION : null,
+            default => null,
+        };
+    }
+
+    private function logPaymentFailure(Order $order, MidtransUnavailable $failure): void
+    {
+        Log::warning($failure->getMessage(), ['order' => $order->number]);
     }
 
     private function page(Request $request, string $view, array|callable $extra = []): View

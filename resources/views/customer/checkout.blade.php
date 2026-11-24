@@ -1,7 +1,12 @@
 <x-customer.layout title="Pembayaran" page="checkout" :customer="$customer" :state="$state">
     <x-customer.header title="Pembayaran" :back="route('customer.cart')" />
     <main id="konten">
-        <x-customer.empty title="Belum ada pesanan" description="Isi keranjang sebelum melanjutkan ke pembayaran." :href="route('customer.catalog')" data-checkout-empty />
+        <div data-checkout-empty>
+            <x-customer.empty title="Belum ada pesanan" description="Isi keranjang sebelum melanjutkan ke pembayaran." :href="route('customer.catalog')" />
+            @if ($state['lastOrder'])
+                <a href="{{ route('customer.payment', $state['lastOrder']) }}" class="customer-cta customer-cta--outline mx-5.5 mt-2">Buka Pesanan Terakhir</a>
+            @endif
+        </div>
         <form id="customer-checkout" method="post" action="{{ route('customer.checkout.store') }}" data-checkout-form hidden>
             @csrf
             <div class="px-5.5 pt-3.5 pb-4 sm:px-6">
@@ -38,13 +43,13 @@
             <fieldset class="border-t border-rule px-5.5 pt-3.5 pb-4 sm:px-6">
                 <legend class="sr-only">Metode Pembayaran</legend>
                 <h2 class="mb-2.5 text-sm font-extrabold" aria-hidden="true">Metode Pembayaran</h2>
-                @if ($simulation)
+                @if ($provider)
                 <label class="customer-panel flex min-h-9 cursor-pointer items-center gap-2 px-2.5 text-xs hover:bg-tint">
                     <strong>QRIS</strong>
-                    <span class="text-[10px] font-bold text-warkop">Demo</span>
+                    <span class="text-[10px] font-bold text-warkop">{{ $provider === \App\Models\Payment::MIDTRANS ? 'Sandbox' : 'Demo' }}</span>
                     <input type="radio" class="ml-auto size-4 accent-warkop" name="payment" value="qris" required>
                 </label>
-                <p class="mt-2 text-[11px] text-subtle">Pembayaran simulasi. Tidak ada uang yang ditagihkan.</p>
+                <p class="mt-2 text-[11px] text-subtle">{{ $provider === \App\Models\Payment::MIDTRANS ? 'Bayar dengan simulator resmi Midtrans.' : 'Pembayaran simulasi. Tidak ada uang yang ditagihkan.' }}</p>
                 <div data-checkout-consent hidden class="mt-3">
                     <label class="flex items-start gap-2 text-xs">
                         <input type="checkbox" name="consent" disabled required class="mt-0.5 size-4 shrink-0 accent-warkop">
@@ -60,7 +65,7 @@
         </form>
     </main>
     <x-customer.total-bar data-checkout-footer hidden>
-        <button form="customer-checkout" type="submit" data-checkout-submit class="customer-cta min-w-39 sm:min-w-52" @disabled(!$simulation)>Lanjut Bayar</button>
+        <button form="customer-checkout" type="submit" data-checkout-submit class="customer-cta min-w-39 sm:min-w-52" @disabled(!$provider)>Lanjut Bayar</button>
     </x-customer.total-bar>
 
 </x-customer.layout>

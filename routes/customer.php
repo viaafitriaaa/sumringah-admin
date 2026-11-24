@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\CustomerController;
+use App\Http\Controllers\MidtransNotificationController;
 use App\Http\Middleware\CustomerSessionOnlyCache;
 use Illuminate\Support\Facades\Route;
 
@@ -15,9 +16,12 @@ Route::prefix('pelanggan')->name('customer.')->middleware(CustomerSessionOnlyCac
     Route::get('/pembayaran', [CustomerController::class, 'checkout'])->block()->name('checkout');
     Route::post('/pembayaran', [CustomerController::class, 'storeOrder'])->block(30, 10)->name('checkout.store');
     Route::get('/pembayaran/{number}', [CustomerController::class, 'payment'])->block()->name('payment');
+    Route::post('/pembayaran/{number}/status', [CustomerController::class, 'paymentStatus'])->block(30, 10)->name('payment.status');
     Route::post('/pembayaran/{number}/simulasi', [CustomerController::class, 'pay'])->block()->name('payment.simulate');
     Route::post('/pembayaran/{number}/batal', [CustomerController::class, 'cancel'])->block()->name('payment.cancel');
     Route::get('/pembayaran-berhasil/{number?}', [CustomerController::class, 'success'])->block()->name('success');
     Route::get('/detail-pesanan/{number?}', [CustomerController::class, 'order'])->block()->name('order');
     Route::get('/informasi', [CustomerController::class, 'outlet'])->block()->name('outlet');
 });
+
+Route::post('/payments/midtrans/notification', MidtransNotificationController::class)->name('payments.midtrans.notification');

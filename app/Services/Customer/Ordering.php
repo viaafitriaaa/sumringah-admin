@@ -18,13 +18,12 @@ final class Ordering
         return app()->environment(['local', 'testing']) && (bool) config('customer.simulate_payment');
     }
 
-    public function place(Session $session, array $input): Order
+    public function place(Session $session, array $input, string $provider): Order
     {
-        abort_unless($this->simulationEnabled(), 503, 'Pembayaran belum tersedia.');
         $accessHash = $this->cart->accessHash($session);
         $draft = $this->cart->data($session);
 
-        $order = DB::transaction(function () use ($session, $input, $accessHash, $draft) {
+        $order = DB::transaction(function () use ($session, $input, $accessHash, $draft, $provider) {
             $existing = Order::query()->where('checkout_key', $input['checkout_key'])->first();
             if ($existing) {
                 abort_unless(hash_equals($existing->access_hash, $accessHash), 404);
@@ -46,6 +45,9 @@ final class Ordering
                 $this->cart->fail('Harga atau ketersediaan berubah. Muat ulang dan periksa total terbaru.');
             }
             $totals = $quote['totals'];
+            if ($provider === Payment::MIDTRANS && ($totals['total'] < 100 || $totals['total'] > 1_000_000_000)) {
+                $this->cart->fail('Total pembayaran QRIS harus antara Rp1 dan Rp10.000.000.');
+            }
             $order = Order::create([
                 'number' => 'WS-'.Str::ulid(),
                 'checkout_key' => $input['checkout_key'],
@@ -62,6 +64,7 @@ final class Ordering
                 'discount_cents' => $totals['discount'],
                 'tax_bps' => $totals['taxBps'],
                 'tax_cents' => $totals['tax'],
+                'rounding_cents' => $totals['rounding'],
                 'total_cents' => $totals['total'],
             ]);
             foreach ($quote['lines'] as $line) {
@@ -83,7 +86,7 @@ final class Ordering
             }
             $order->payment()->create([
                 'method' => 'qris',
-                'provider' => Payment::SIMULATION,
+                'provider' => $provider,
                 'status' => 'pending',
                 'amount_cents' => $totals['total'],
             ]);
@@ -107,23 +110,32 @@ final class Ordering
     public function resolveSimulation(Order $order, bool $paid): void
     {
         abort_unless($this->simulationEnabled(), 404);
-        DB::transaction(function () use ($order, $paid) {
+
+        $this->applyPayment($order, Payment::SIMULATION, [], $paid ? 'paid' : 'cancelled');
+    }
+
+    public function applyPayment(Order $order, string $provider, array $details, ?string $outcome): void
+    {
+        DB::transaction(function () use ($order, $provider, $details, $outcome) {
             $order = Order::query()->lockForUpdate()->findOrFail($order->id);
             $payment = $order->payment()->lockForUpdate()->firstOrFail();
-            abort_unless($payment->provider === Payment::SIMULATION, 404);
+            abort_unless($payment->provider === $provider, 404);
             if ($order->status !== Order::AWAITING || $payment->status !== 'pending') {
                 return;
             }
 
-            if (!$paid) {
+            if ($outcome === 'cancelled') {
                 foreach ($order->items()->whereNotNull('menu_id')->orderBy('menu_id')->get() as $line) {
                     Menu::query()->whereKey($line->menu_id)->increment('stok', $line->quantity);
                 }
             }
 
-            // A real gateway must use a separate, verified server callback.
-            $payment->update(['status' => $paid ? 'paid' : 'cancelled', 'paid_at' => $paid ? now() : null]);
-            $order->update(['status' => $paid ? Order::CONFIRMED : Order::CANCELLED]);
+            if ($outcome !== null) {
+                $payment->update($details + ['status' => $outcome, 'paid_at' => $outcome === 'paid' ? now() : null]);
+                $order->update(['status' => $outcome === 'paid' ? Order::CONFIRMED : Order::CANCELLED]);
+            } else {
+                $payment->update($details);
+            }
         }, 3);
     }
 }

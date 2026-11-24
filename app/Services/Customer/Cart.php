@@ -177,7 +177,12 @@ final class Cart
         }
         $taxBps = Money::taxBps();
         $tax = intdiv($subtotal, 10000) * $taxBps + intdiv(($subtotal % 10000) * $taxBps + 5000, 10000);
-        $totals = ['subtotal' => $subtotal, 'discount' => 0, 'tax' => $tax, 'taxBps' => $taxBps, 'total' => $subtotal + $tax, 'count' => $count];
+        $unrounded = $subtotal + $tax;
+        $total = config('payment.driver') === 'midtrans' ? intdiv($unrounded + 50, 100) * 100 : $unrounded;
+        $totals = [
+            'subtotal' => $subtotal, 'discount' => 0, 'tax' => $tax, 'taxBps' => $taxBps,
+            'rounding' => $total - $unrounded, 'total' => $total, 'count' => $count,
+        ];
 
         return [
             'lines' => $rows,

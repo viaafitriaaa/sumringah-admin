@@ -1,8 +1,10 @@
-import { createCart, number, rupiah } from './cart-client.js';
+import { createCart, createRequest, number, rupiah } from './cart-client.js';
+import { startPayment } from './payment.js';
 
 const root = document.querySelector('[data-customer-page]');
 const config = JSON.parse(document.getElementById('customer-data').textContent);
-const cart = createCart(config, document.querySelector('meta[name="csrf-token"]').content);
+const request = createRequest(document.querySelector('meta[name="csrf-token"]').content);
+const cart = createCart(config, request);
 const $ = (selector, container = root) => container.querySelector(selector);
 const $$ = (selector, container = root) => [...container.querySelectorAll(selector)];
 const write = (selector, value, container = root) => $$(selector, container).forEach((element) => { element.textContent = value; });
@@ -22,6 +24,8 @@ function renderTotals() {
     write('[data-subtotal]', rupiah(totals.subtotal));
     write('[data-discount]', rupiah(totals.discount));
     write('[data-tax]', rupiah(totals.tax));
+    write('[data-rounding]', rupiah(totals.rounding));
+    for (const row of $$('[data-rounding-row]')) row.hidden = totals.rounding === 0;
     write('[data-total]', rupiah(totals.total));
     for (const link of $$('[data-cart-link]')) link.hidden = totals.count === 0;
 }
@@ -232,7 +236,7 @@ function startCheckout() {
     const consent = $('[data-checkout-consent]');
     const button = $('[data-checkout-submit]');
     const region = $('[data-checkout-error]');
-    const simulation = Boolean(consent);
+    const canPay = Boolean(consent);
     let busy = false;
 
     function error(message) {
@@ -240,7 +244,7 @@ function startCheckout() {
         region.textContent = message;
     }
     function validate() {
-        if (!simulation) return;
+        if (!canPay) return;
         const fields = form.elements;
         const phone = fields.phone.value.trim();
         const digits = phone.replace(/\D/g, '').length;
@@ -255,7 +259,7 @@ function startCheckout() {
         $('[data-checkout-empty]').hidden = hasItems;
         form.hidden = !hasItems;
         $('[data-checkout-footer]').hidden = !hasItems;
-        button.disabled = busy || !simulation || !state.valid || !state.table;
+        button.disabled = busy || !canPay || !state.valid || !state.table;
         button.textContent = busy ? 'Menyimpan…' : 'Lanjut Bayar';
         write('[data-checkout-type]', state.type === 'takeaway' ? 'Bawa pulang' : 'Makan di tempat');
         if (hasItems && (!state.valid || !state.table)) error('Periksa nomor meja dan ketersediaan item di keranjang.');
@@ -307,6 +311,7 @@ switch (root.dataset.customerPage) {
     case 'item': render = startItem(); break;
     case 'cart': render = startCart(); break;
     case 'checkout': render = startCheckout(); break;
+    case 'payment': startPayment($('[data-midtrans-payment]'), request, toast); break;
     case 'outlet': startOutlet(); break;
 }
 render();

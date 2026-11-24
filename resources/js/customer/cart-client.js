@@ -3,10 +3,8 @@ const idNumber = new Intl.NumberFormat('id-ID', { maximumFractionDigits: 2 });
 export const number = (cents) => idNumber.format(cents / 100);
 export const rupiah = (cents) => `Rp${number(cents)}`;
 
-export function createCart(config, csrf) {
-    let state = config.state;
-
-    async function request(url, body) {
+export function createRequest(csrf) {
+    return async function request(url, body) {
         let response;
         try {
             response = await fetch(url, {
@@ -26,7 +24,11 @@ export function createCart(config, csrf) {
             throw Object.assign(new Error(message), { status: response.status });
         }
         return data;
-    }
+    };
+}
+
+export function createCart(config, request) {
+    let state = config.state;
 
     return {
         get state() { return state; },

@@ -16,7 +16,7 @@ class Order extends Model
     protected $fillable = [
         'number', 'checkout_key', 'access_hash', 'meja_id', 'table_code',
         'customer_name', 'customer_phone', 'customer_email', 'type', 'note', 'status',
-        'subtotal_cents', 'discount_cents', 'tax_bps', 'tax_cents', 'total_cents',
+        'subtotal_cents', 'discount_cents', 'tax_bps', 'tax_cents', 'rounding_cents', 'total_cents',
     ];
 
     protected $hidden = ['access_hash', 'checkout_key', 'customer_name', 'customer_phone', 'customer_email'];

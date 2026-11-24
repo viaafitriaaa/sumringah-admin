@@ -30,6 +30,7 @@
                     <div class="flex justify-between gap-2"><dt>Subtotal</dt><dd data-subtotal></dd></div>
                     <div class="flex justify-between gap-2 text-subtle"><dt>Diskon</dt><dd data-discount></dd></div>
                     <div class="flex justify-between gap-2 text-subtle"><dt>PBJT ({{ $customer['taxBps'] / 100 }}%)</dt><dd data-tax></dd></div>
+                    <div data-rounding-row hidden class="flex justify-between gap-2 text-subtle"><dt>Pembulatan QRIS</dt><dd data-rounding></dd></div>
                     <div class="flex justify-between gap-2 text-sm font-extrabold"><dt>Total</dt><dd class="text-warkop" data-total></dd></div>
                 </dl>
             </section>

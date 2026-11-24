@@ -11,6 +11,8 @@
                     <p class="mt-1 text-xs text-subtle">Terima kasih atas pesanan Anda.</p>
                     @if ($order->payment?->provider === \App\Models\Payment::SIMULATION)
                         <p class="mt-1 text-[10px] font-bold text-warkop">Simulasi pembayaran</p>
+                    @elseif ($order->payment?->provider === \App\Models\Payment::MIDTRANS)
+                        <p class="mt-1 text-[10px] font-bold text-warkop">Midtrans Sandbox</p>
                     @endif
                 </div>
                 <x-customer.order-info :order="$order" :timezone="$customer['timeZone']" summary class="mt-4.5" />
@@ -25,7 +27,11 @@
                         <strong class="block text-sm">{{ match ($order->status) {
                             'confirmed' => 'Pembayaran Berhasil!',
                             'awaiting_payment' => 'Menunggu pembayaran',
-                            default => 'Pesanan dibatalkan',
+                            default => match ($order->payment?->provider_status) {
+                                'expire' => 'Pembayaran kedaluwarsa',
+                                'deny', 'failure' => 'Pembayaran gagal',
+                                default => 'Pesanan dibatalkan',
+                            },
                         } }}</strong>
                         @if ($order->payment?->provider === \App\Models\Payment::SIMULATION)
                             <p class="text-[11px]">Transaksi lokal dengan simulasi pembayaran.</p>
@@ -59,6 +65,9 @@
                         <div class="flex justify-between gap-2"><dt>Subtotal</dt><dd>Rp{{ \App\Services\Customer\Money::format($order->subtotal_cents) }}</dd></div>
                         <div class="flex justify-between gap-2"><dt>PBJT ({{ $order->tax_bps / 100 }}%)</dt><dd>Rp{{ \App\Services\Customer\Money::format($order->tax_cents) }}</dd></div>
                         <div class="flex justify-between gap-2"><dt>Diskon</dt><dd>Rp{{ \App\Services\Customer\Money::format($order->discount_cents) }}</dd></div>
+                        @if ($order->rounding_cents)
+                            <div class="flex justify-between gap-2"><dt>Pembulatan QRIS</dt><dd>Rp{{ \App\Services\Customer\Money::format($order->rounding_cents) }}</dd></div>
+                        @endif
                         <div class="mt-3 flex items-center justify-between gap-2 rounded bg-table px-2.5 py-3 text-sm font-extrabold"><dt>Total Pembayaran</dt><dd class="text-warkop" data-receipt-total>Rp{{ \App\Services\Customer\Money::format($order->total_cents) }}</dd></div>
                     </dl>
                 </section>

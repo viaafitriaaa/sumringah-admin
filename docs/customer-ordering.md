@@ -6,6 +6,7 @@ Gunakan salinan database pengembangan yang sudah memiliki `menus`, `mejas`, `set
 
 ```shell
 php artisan migrate --path=database/migrations/2026_11_24_170000_create_customer_order_tables.php
+php artisan migrate --path=database/migrations/2026_11_24_180000_add_midtrans_fields_to_customer_payments.php
 ```
 
 Migration promo dengan nama yang tercatat di database tim disertakan agar file dan riwayatnya selaras. Pada database impor, migration itu sudah berstatus `Ran`. Migration awal `users` pada repo mula-mula mengubah tabel yang belum dibuat, sehingga instalasi dari database kosong masih perlu keputusan tim admin.
@@ -23,10 +24,18 @@ Jalankan `php artisan customer:check-data` untuk melihat foto yang belum tersedi
 - Harga dan jumlah disimpan dalam sen Rupiah dan dihitung di server. `CUSTOMER_PBJT_BPS` bernilai 0 secara default. Jika tim menyepakati tarif, misalnya 10%, nilai konfigurasinya adalah 1000 basis point. Tarif, pajak, subtotal, diskon, dan total tersimpan pada pesanan.
 - Promo hanya ditampilkan ketika aktif dan tanggal Jakarta berada dalam periode berlaku, termasuk tanggal mulai dan akhir. Diskon checkout bernilai nol sampai tim menetapkan arti nilai promo, target, dan cara menggabungkan promo.
 - Opsi tambahan tampil jika ada baris aktif di `menu_options` untuk menu. Tidak ada opsi buatan yang ditambahkan ke data impor. Checkout menyimpan nama, harga, opsi, dan catatan per baris sebagai snapshot.
-- Saat checkout, stok dialokasikan dalam transaksi database menggunakan row lock dan pengurangan bersyarat. Status awal pesanan `awaiting_payment` dan pembayaran `pending`. Pembatalan eksplisit mengembalikan stok sekali. Aturan kedaluwarsa otomatis masih perlu ditentukan tim.
-- Checkout dan penyelesaian pembayaran saat ini memakai simulator server, hanya ketika `APP_ENV` adalah `local` atau `testing` dan `CUSTOMER_SIMULATE_PAYMENT` aktif. Produksi tetap dapat menampilkan katalog, tetapi belum menerima checkout. Gunakan data kontak contoh untuk simulasi. Email opsional disimpan sebagai bagian dari pesanan; aplikasi belum mengirim struk.
+- Saat checkout, database mengalokasikan stok dengan row lock dan pengurangan bersyarat. Status awal pesanan `awaiting_payment` dan pembayaran `pending`. Jika pembayaran Midtrans dipastikan batal, ditolak, atau kedaluwarsa, order dan payment diperbarui bersama pengembalian stok dalam satu transaksi database.
+- Untuk menjalankan simulator internal, gunakan `PAYMENT_DRIVER=simulation` pada lingkungan `local` atau `testing` dengan `CUSTOMER_SIMULATE_PAYMENT=true`. Gunakan data kontak contoh. Email opsional disimpan sebagai bagian dari pesanan. Pengiriman struk email belum tersedia.
 - Detail pesanan terikat ke sesi browser yang membuatnya. Keranjang memakai session Laravel. Untuk deployment lebih dari satu instance, gunakan session dan cache yang dibagi serta mendukung lock.
 
-## Integrasi QRIS berikutnya
+## Midtrans Sandbox
 
-Adaptor gateway perlu membuat pembayaran dari total server, mengisi `provider` dan `provider_reference`, lalu memverifikasi notifikasi server dari penyedia. Konfirmasi harus cocok dengan referensi dan nominal yang disimpan, idempoten, serta memperbarui pembayaran dan pesanan dalam satu transaksi. Route simulator lokal tidak digunakan sebagai callback produksi.
+Atur `PAYMENT_DRIVER=midtrans` dan `MIDTRANS_IS_PRODUCTION=false` di `.env`. Isi `MIDTRANS_SERVER_KEY` dan `MIDTRANS_SIGNATURE_SECRET_KEY` dari dashboard Sandbox. Server Key memerlukan Core API Write. Tombol pembatalan memerlukan izin Cancel transaction. `MIDTRANS_CLIENT_KEY` tersedia sebagai placeholder untuk kebutuhan integrasi lain. QRIS Core API memakai Laravel HTTP Client dari server.
+
+- Nomor pesanan juga menjadi `order_id` di Midtrans. Checkout membulatkan total akhir ke rupiah terdekat, setengah dibulatkan ke atas. Selisihnya tampil di ringkasan dan tersimpan di `orders.rounding_cents`. Rincian item, diskon, dan pajak mempertahankan presisi semula.
+- `payments` menyimpan referensi transaksi, status gateway, URL QR, waktu upaya charge, dan waktu kedaluwarsa. Charge QRIS menggunakan GoPay sebagai acquirer dengan masa berlaku 15 menit. Jika proses charge tidak memberi hasil pasti, retry mengecek status dengan nomor pesanan yang sama sebelum mencoba charge lagi.
+- Halaman pembayaran melakukan polling setiap 8 detik saat aktif dan memperlambat polling saat koneksi gagal. Jalankan `php artisan schedule:work` di terminal terpisah agar `customer:sync-payments` tetap memeriksa transaksi pending setiap menit saat halaman ditutup. Gunakan cache bersama yang mendukung lock untuk beberapa instance Laravel.
+- Webhook `POST /payments/midtrans/notification` memakai Signature Secret Key untuk memverifikasi signature Core API. Laravel kemudian mengambil Get Status langsung dari Midtrans dan mencocokkan ID pesanan, ID transaksi, nominal, mata uang IDR, dan metode QRIS. Hanya endpoint ini yang dikecualikan dari CSRF. Pengiriman webhook dari Midtrans dapat diuji saat aplikasi mempunyai URL HTTPS yang bisa dijangkau.
+- Jika Midtrans belum dapat memastikan hasil charge atau pembatalan, pesanan tetap pending dan stok tetap dicadangkan. Setelah status terminal terkonfirmasi, pengembalian stok hanya terjadi sekali.
+
+Untuk pembayaran dummy, buka `/pelanggan`, pilih meja, isi keranjang, dan checkout dengan QRIS Sandbox. Di halaman pembayaran, pilih **Salin tautan QR** lalu tempelkan ke [Simulator QRIS Midtrans](https://simulator.sandbox.midtrans.com/v2/qris/index). Pilih **Scan QR** dan selesaikan langkah pembayaran di simulator. Kembali ke aplikasi dan tunggu polling atau pilih **Cek Status Pembayaran**. Gunakan tautan QR hanya di simulator resmi. [Panduan pengujian Sandbox](https://docs.midtrans.com/docs/testing-payment-on-sandbox)
